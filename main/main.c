@@ -3,11 +3,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "driver/adc.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
-#include <driver/i2c.h>
-#include "sdkconfig.h"
-#include "HD44780.h"
 
 // https://esp32tutorials.com/esp32-gpio-interrupts-esp-idf/
 #define LED_PIN 18
@@ -18,28 +16,40 @@
 
 // https://esp32tutorials.com/esp32-pwm-esp-idf-led-brightness-control/
 #define LED_PWM_PIN 19
-
-// https://esp32tutorials.com/i2c-lcd-esp32-esp-idf/
-#define LCD_ADDR 0x3F
-#define SDA_PIN  21
-#define SCL_PIN  22
-#define LCD_COLS 20
-#define LCD_ROWS 4
-
-// interrupt queue
-QueueHandle_t interruptQueue = NULL;
-
-// LED control channel
+// PWM LED control channel
 static ledc_channel_config_t ledc_channel;
+
+#define POTENTIOMETER_PIN 32
+// GPIO32 is ADC1_CH4
+static const adc1_channel_t adc_channel = ADC_CHANNEL_4;
+
+// Count of ADC value, from which the average is calculated
+#define SAMPLE_CNT 32
+
+// // https://esp32tutorials.com/i2c-lcd-esp32-esp-idf/
+// #define LCD_ADDR 0x3F
+// #define SDA_PIN  21
+// #define SCL_PIN  22
+// #define LCD_COLS 20
+// #define LCD_ROWS 4
+
+// interrupt queues
+QueueHandle_t buttonInterruptQueue = NULL;
 
 static void IRAM_ATTR gpio_interrupt_handler(void *args)
 {
     int gpioNum = (int)args;
-    xQueueSendFromISR(interruptQueue, &gpioNum, NULL);
+    if (gpioNum == BUTTON_PIN)
+    {
+        xQueueSendFromISR(buttonInterruptQueue, &gpioNum, NULL);
+    }
 }
 
 static void init_led_pwm(void)
 {
+    adc1_config_width(ADC_WIDTH_BIT_10);
+    adc1_config_channel_atten(adc_channel, ADC_ATTEN_DB_11);
+    
     ledc_timer_config_t ledc_timer = {
         .duty_resolution = LEDC_TIMER_10_BIT,
         .freq_hz = 1000,
@@ -74,7 +84,7 @@ static void button_press(void *params)
 
     while (true)
     {
-        if (xQueueReceive(interruptQueue, &gpioNum, portMAX_DELAY))
+        if (xQueueReceive(buttonInterruptQueue, &gpioNum, portMAX_DELAY))
         {
             buttonTime = xTaskGetTickCount();
             if (buttonTime - lastButtonTime > DEBOUNCE_TIME)
@@ -88,27 +98,40 @@ static void button_press(void *params)
     }
 }
 
-static void lcd_task(void* param)
+static void sample_adc1()
 {
-    char num[20];
-    while (true) {
-        LCD_home();
-        LCD_clearScreen();
-        LCD_writeStr("20x4 I2C LCD");
-        vTaskDelay(3000 / portTICK_RATE_MS);
-        LCD_clearScreen();
-        LCD_writeStr("Lets Count 0-10!");
-        vTaskDelay(3000 / portTICK_RATE_MS);
-        LCD_clearScreen();
-        for (int i = 0; i <= 10; i++) {
-            LCD_setCursor(8, 2);
-            sprintf(num, "%d", i);
-            LCD_writeStr(num);
-            vTaskDelay(1000 / portTICK_RATE_MS);
-        }
-  
+    //Continuously sample ADC1
+    uint32_t adc = 0;
+    for (int i = 0; i < SAMPLE_CNT; ++i)
+    {
+        adc += adc1_get_raw(adc_channel);
     }
+    adc /= SAMPLE_CNT;
+
+    ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, adc);
+    ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 }
+
+// static void lcd_task(void* param)
+// {
+//     char num[20];
+//     while (true) {
+//         LCD_home();
+//         LCD_clearScreen();
+//         LCD_writeStr("20x4 I2C LCD");
+//         vTaskDelay(3000 / portTICK_RATE_MS);
+//         LCD_clearScreen();
+//         LCD_writeStr("Lets Count 0-10!");
+//         vTaskDelay(3000 / portTICK_RATE_MS);
+//         LCD_clearScreen();
+//         for (int i = 0; i <= 10; i++) {
+//             LCD_setCursor(8, 2);
+//             sprintf(num, "%d", i);
+//             LCD_writeStr(num);
+//             vTaskDelay(1000 / portTICK_RATE_MS);
+//         }
+//     }
+// }
 
 void app_main(void)
 {    
@@ -136,29 +159,23 @@ void app_main(void)
     gpio_intr_enable(BUTTON_PIN);
 
     // * LCD
-    LCD_init(LCD_ADDR, SDA_PIN, SCL_PIN, LCD_COLS, LCD_ROWS);
-    xTaskCreate(lcd_task, "Demo Task", 2048, NULL, 5, NULL);
+    // LCD_init(LCD_ADDR, SDA_PIN, SCL_PIN, LCD_COLS, LCD_ROWS);
+    // xTaskCreate(lcd_task, "Demo Task", 2048, NULL, 5, NULL);
 
     // * INTERRUPTS
     // create interrupt queue of 10 elements
-    interruptQueue = xQueueCreate(10, sizeof(uint32_t));
-    // create a led toogle task
+    buttonInterruptQueue = xQueueCreate(10, sizeof(uint32_t));
+    // create a button press task
     xTaskCreate(button_press, "Button press", 2048, NULL, 10, NULL);
     // install gpio isr service
     gpio_install_isr_service(0);
     // hook isr handler for specific gpio pin
     gpio_isr_handler_add(BUTTON_PIN, gpio_interrupt_handler, (void *)BUTTON_PIN);
 
-    volatile int adc = 0;
     while(true)
     {
-        ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, adc);
-        ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
+        sample_adc1();
 
-        if(adc>1000) adc = 0;
-        adc += 10;
-
-        // vTaskDelay(1000/ portTICK_PERIOD_MS);
-        vTaskDelay(100/ portTICK_PERIOD_MS);
+        vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 }
