@@ -5,10 +5,7 @@
 #include "freertos/queue.h"
 #include "driver/adc.h"
 #include "driver/gpio.h"
-#include "driver/i2c.h"
 #include "driver/ledc.h"
-#include "esp_log.h"
-#include "esp_err.h"
 
 // https://esp32tutorials.com/esp32-gpio-interrupts-esp-idf/
 #define LED_PIN 18
@@ -28,23 +25,6 @@ static const adc1_channel_t adc_channel = ADC_CHANNEL_4;
 
 // Count of ADC value, from which the average is calculated
 #define SAMPLE_CNT 32
-
-// https://github.com/DiegoPaezA/ESP32-freeRTOS/blob/master/i2cPCA9548a/main/i2cPCA9548a.c
-#define PCA9548ADDR   0x70  // W   ADDRESS MUX
-// PCA9548 CHANNELS
-#define  PCA9548_OFF  0x00  // W   CHANNELS OFF
-#define  PCA9548_CH1  0x01  // W   ACTIVATION OF CHANNEL 1
-#define  PCA9548_CH2  0x02  // W   ACTIVATION OF CHANNEL 2
-#define  PCA9548_CH3  0x04  // W   ACTIVATION OF CHANNEL 3
-#define  PCA9548_CH4  0x08  // W   ACTIVATION OF CHANNEL 4
-#define  PCA9548_CH5  0x10  // W   ACTIVATION OF CHANNEL 5
-#define  PCA9548_CH6  0x20  // W   ACTIVATION OF CHANNEL 6
-#define  PCA9548_CH7  0x40  // W   ACTIVATION OF CHANNEL 7
-#define  PCA9548_CH8  0x80  // W   ACTIVATION OF CHANNEL 8
-
-#define ACK_VAL    0x0
-#define NACK_VAL   0x1
-#define I2C_MASTER_FREQ_HZ 100000
 
 // // https://esp32tutorials.com/i2c-lcd-esp32-esp-idf/
 // #define LCD_ADDR 0x3F
@@ -120,6 +100,7 @@ static void button_press(void *params)
 
 static void sample_adc1()
 {
+    //Continuously sample ADC1
     uint32_t adc = 0;
     for (int i = 0; i < SAMPLE_CNT; ++i)
     {
@@ -129,61 +110,6 @@ static void sample_adc1()
 
     ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, adc);
     ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
-}
-
-void init_i2c()
-{
-    // configure the i2c controller 0 in master mode, normal speed
-	i2c_config_t conf;
-	conf.mode = I2C_MODE_MASTER;
-	conf.sda_io_num = 21;
-	conf.scl_io_num = 22;
-	conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
-	conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
-	conf.master.clk_speed = I2C_MASTER_FREQ_HZ; //100000
-	conf.clk_flags = 0; //(V4.4)  is 0, the clock allocator will select only according to the desired frequency.
-	ESP_ERROR_CHECK(i2c_param_config(I2C_NUM_0, &conf));
-	printf("I2C controller configured\r\n");
-
-	// install the driver
-	ESP_ERROR_CHECK(i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0));
-	printf("I2C driver installed\r\n\r\n");
-
-}
-
-void selectI2CChannel(int muxADD, int channelADD) 
-{
-	// create and execute the command link
-	i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-	i2c_master_start(cmd);
-	i2c_master_write_byte(cmd,(muxADD << 1) | I2C_MASTER_WRITE,true);
-	i2c_master_write_byte(cmd,channelADD,true);
-	i2c_master_stop(cmd);
-	if(i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS) == ESP_OK) 
-    {
-		printf("Selecting channel 0x%02x of Mux I2C \r\n", channelADD);
-	}
-	i2c_cmd_link_delete(cmd);
-
-}
-
-void i2c_scan(void){
-	int devices_found = 0;
-		for(int address = 1; address < 127; address++) {
-
-			// create and execute the command link
-			i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-			i2c_master_start(cmd);
-			i2c_master_write_byte(cmd, (address << 1) | I2C_MASTER_WRITE, true);
-			i2c_master_stop(cmd);
-			if(i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS) == ESP_OK) {
-				printf("-> found device with address 0x%02x\r\n", address);
-				devices_found++;
-			}
-			i2c_cmd_link_delete(cmd);
-		}
-		if(devices_found == 0) printf("\r\n-> no devices found\r\n");
-		printf("\r...scan completed!\r\n");
 }
 
 // static void lcd_task(void* param)
@@ -246,10 +172,6 @@ void app_main(void)
     // hook isr handler for specific gpio pin
     gpio_isr_handler_add(BUTTON_PIN, gpio_interrupt_handler, (void *)BUTTON_PIN);
 
-    init_i2c();
-    esp_log_level_set("I2C", ESP_LOG_INFO);
-	i2c_scan();
- 	selectI2CChannel(PCA9548ADDR,PCA9548_CH7);
     while(true)
     {
         sample_adc1();
