@@ -16,8 +16,8 @@ const int temp_short_bus = 6;
 const int temp_long_bus = 7;
 const int buzzer_pin = 14;
 
-// Data for microSD
-String data;
+// Filename for microSD
+const String filename = "/temperature_readings.txt";
 
 // Temperature sensors
 ClosedCube_Si7051 si7051;
@@ -60,6 +60,40 @@ void TCA9548A(uint8_t bus) {
   Wire.endTransmission();
 }
 
+// Create and write to a file
+void writeToFile(fs::FS &fs, const char *path, const char *data) {
+  Serial.printf("Writing file: %s\n", path);
+
+  File file = fs.open(path, FILE_WRITE);
+  if (!file) {
+    Serial.println("Failed to open file for writing");
+    return;
+  }
+  if (file.print(data)) {
+    Serial.println("File written");
+  } else {
+    Serial.println("Write failed");
+  }
+  file.close();
+}
+
+// Append data to a file
+void appendToFile(fs::FS &fs, const char *path, const char *data) {
+  Serial.printf("Appending to file: %s\n", path);
+
+  File file = fs.open(path, FILE_APPEND);
+  if (!file) {
+    Serial.println("Failed to open file for appending");
+    return;
+  }
+  if (file.print(data)) {
+    Serial.println("Data appended");
+  } else {
+    Serial.println("Append failed");
+  }
+  file.close();
+}
+
 void setup() {
   // Initialize serial
   Serial.begin(230400);
@@ -77,15 +111,32 @@ void setup() {
   TCA9548A(temp_long_bus);
   si7051.begin(0x40);
 
+  // Initialize LCD
+  lcd.print("Initializing LCD...");
   TCA9548A(lcd_bus);
   lcd.begin(lcdColumns, lcdRows);
   lcd.setBacklight(255);
   lcd.home();
   lcd.clear();
-  lcd.print("Initializing ...");
 
   lcd.createChar(0, Celsius);
   lcd.createChar(1, hPa);
+
+  // Initialize SD card
+  lcd.print("Initializing SD card...");
+  if (!SD.begin()) {
+    Serial.println("SD card initialization failed!");
+  }
+
+  // Create a file if doesn't exist
+  File file = SD.open(filename);
+  if (!file) {
+    Serial.println("File does not exist, creating a new file...");
+    writeToFile(SD, filename, "Index, Temperature (short), Temperature (long), Temperature Difference (short and long)");
+  } else {
+    Serial.println("File exists");
+  }
+  file.close();
 
   // Initialize a buzzer pin as an output pin
   pinMode(buzzer_pin, OUTPUT);
@@ -166,6 +217,12 @@ void loop() {
 
   // Display on the LCD
   lcd.display();
+
+  // Append to file on microSD
+  int index = 0;
+  String data = String(index++) + "," + String(avS) + "," + String(avL) + "," + String(dLS) + "\r\n";
+  Serial.println(data);
+  appendToFile(SD, filepath, data.c_str());
 
   // If average temperature of a short termometer is above 25.01, use a buzzer
   if (avS > 25.01) {

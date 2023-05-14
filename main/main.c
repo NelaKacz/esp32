@@ -8,14 +8,14 @@
 #include "driver/ledc.h"
 
 // https://esp32tutorials.com/esp32-gpio-interrupts-esp-idf/
-#define LED_PIN 18
+#define LED_PIN 12
 #define BUTTON_PIN 15
 
 // the debounce time of a button in ticks, increase this time if it still chatters
 #define DEBOUNCE_TIME 30 
 
 // https://esp32tutorials.com/esp32-pwm-esp-idf-led-brightness-control/
-#define LED_PWM_PIN 19
+#define LED_PWM_PIN 13
 // PWM LED control channel
 static ledc_channel_config_t ledc_channel;
 #define POTENTIOMETER_PIN 32
