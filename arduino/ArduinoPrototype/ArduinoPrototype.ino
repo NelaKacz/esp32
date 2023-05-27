@@ -2,6 +2,8 @@
 Multiplexer - HW-616, TCA9548A
 https://randomnerdtutorials.com/tca9548a-i2c-multiplexer-esp32-esp8266-arduino/
 LCD - 20x4
+MicroSD - https://randomnerdtutorials.com/esp32-microsd-card-arduino/
+custom pins - https://randomnerdtutorials.com/esp32-microsd-card-arduino/#sdcardcustompins
 */
 
 #include "FS.h"
@@ -10,19 +12,17 @@ LCD - 20x4
 #include <ClosedCube_Si7051.h>
 #include <LiquidCrystal_PCF8574.h>
 
-// Pin definitions
+// Pin definitions through multiplexer
 const int lcd_bus = 5;
 const int temp_short_bus = 6;
 const int temp_long_bus = 7;
 const int buzzer_pin = 14;
 
 // Filename for microSD
-const String filename = "/temperature_readings.txt";
+const char *filename = "/temperature_readings1.txt";
 
 // Temperature sensors
 ClosedCube_Si7051 si7051;
-double sShort;
-double sLong;
 
 // LCD
 int lcdColumns = 20;
@@ -79,7 +79,7 @@ void writeToFile(fs::FS &fs, const char *path, const char *data) {
 
 // Append data to a file
 void appendToFile(fs::FS &fs, const char *path, const char *data) {
-  Serial.printf("Appending to file: %s\n", path);
+  // Serial.printf("Appending to file: %s\n", path);
 
   File file = fs.open(path, FILE_APPEND);
   if (!file) {
@@ -87,7 +87,7 @@ void appendToFile(fs::FS &fs, const char *path, const char *data) {
     return;
   }
   if (file.print(data)) {
-    Serial.println("Data appended");
+    // Serial.println("Data appended");
   } else {
     Serial.println("Append failed");
   }
@@ -103,16 +103,18 @@ void setup() {
   // Start I2C communication with the Multiplexer
   Wire.begin();
 
+  Serial.println("Begin short");
   // Temperature sensor on a short wire
   TCA9548A(temp_short_bus);
   si7051.begin(0x40);
 
+  Serial.println("Begin long");
   // Temperature sensor on a long wire
   TCA9548A(temp_long_bus);
   si7051.begin(0x40);
 
+  Serial.println("Initializing LCD...");
   // Initialize LCD
-  lcd.print("Initializing LCD...");
   TCA9548A(lcd_bus);
   lcd.begin(lcdColumns, lcdRows);
   lcd.setBacklight(255);
@@ -123,7 +125,7 @@ void setup() {
   lcd.createChar(1, hPa);
 
   // Initialize SD card
-  lcd.print("Initializing SD card...");
+  Serial.print("Initializing SD card...");
   if (!SD.begin()) {
     Serial.println("SD card initialization failed!");
   }
@@ -131,13 +133,15 @@ void setup() {
   // Create a file if doesn't exist
   File file = SD.open(filename);
   if (!file) {
+    file.close();
     Serial.println("File does not exist, creating a new file...");
-    writeToFile(SD, filename, "Index, Temperature (short), Temperature (long), Temperature Difference (short and long)");
+    String columns = "Index, Temperature (short), Temperature (long), Temperature Difference (short and long) \r\n";
+    writeToFile(SD, filename, columns.c_str());
   } else {
+    file.close();
     Serial.println("File exists");
   }
-  file.close();
-
+  
   // Initialize a buzzer pin as an output pin
   pinMode(buzzer_pin, OUTPUT);
 }
@@ -154,8 +158,8 @@ void loop() {
   char dLS_bf[8];
 
   // Temperature readings
-  tempShort = 0;
-  tempLong = 0;
+  double tempShort = 0;
+  double tempLong = 0;
 
   // Make 250 readings and calculate the average
   for (int i = 0; i < 250; i++) {
@@ -171,16 +175,16 @@ void loop() {
   dLS = avL - avS;
 
   sprintf(avS_bf, "%3.4f", avS);
-  Serial.print("Termometer S = ");
-  Serial.print(avS_bf);
-  Serial.println(" C");
+  // Serial.print("Termometer S = ");
+  // Serial.print(avS_bf);
+  // Serial.println(" C");
 
   sprintf(avL_bf, "%3.4f", avL);
-  Serial.print("Termometer L = ");
-  Serial.print(avL_bf);
-  Serial.println(" C");
+  // Serial.print("Termometer L = ");
+  // Serial.print(avL_bf);
+  // Serial.println(" C");
 
-  Serial.println(dLS * 100);
+  // Serial.println(dLS * 100);
 
   sprintf(dLS_bf, "%3.4f", dLS);
 
@@ -188,21 +192,20 @@ void loop() {
   TCA9548A(lcd_bus);
 
   // Print S (temperature on the short wire) on the LCD
-  lcd.setCursor(0, 1);
+  lcd.setCursor(0, 0);
   lcd.print("S ");
-  lcd.setCursor(2, 1);
+  lcd.setCursor(2, 0);
   lcd.printf(avS_bf, "%3.4f", avS);
-  lcd.setCursor(9, 1);
+  lcd.setCursor(9, 0);
   lcd.write(0);
   delay(10);
 
   // Print L (temperature on the long wire) on the LCD
-  lcd.clear();
-  lcd.setCursor(0, 0);
+  lcd.setCursor(0, 1);
   lcd.print("L ");
-  lcd.setCursor(2, 0);
+  lcd.setCursor(2, 1);
   lcd.printf(avL_bf, "%3.4f", avL);
-  lcd.setCursor(9, 0);
+  lcd.setCursor(9, 1);
   lcd.write(0);
   delay(10);
 
@@ -213,7 +216,6 @@ void loop() {
   lcd.printf(dLS_bf, "%3.4f", dLS);
   lcd.setCursor(9, 2);
   lcd.write(0);
-  lcd.setCursor(10, 2);
 
   // Display on the LCD
   lcd.display();
@@ -221,8 +223,8 @@ void loop() {
   // Append to file on microSD
   int index = 0;
   String data = String(index++) + "," + String(avS) + "," + String(avL) + "," + String(dLS) + "\r\n";
-  Serial.println(data);
-  appendToFile(SD, filepath, data.c_str());
+  // Serial.println(data);
+  appendToFile(SD, filename, data.c_str());
 
   // If average temperature of a short termometer is above 25.01, use a buzzer
   if (avS > 25.01) {
