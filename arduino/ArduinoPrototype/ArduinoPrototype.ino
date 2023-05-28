@@ -4,13 +4,16 @@ https://randomnerdtutorials.com/tca9548a-i2c-multiplexer-esp32-esp8266-arduino/
 LCD - 20x4
 MicroSD - https://randomnerdtutorials.com/esp32-microsd-card-arduino/
 custom pins - https://randomnerdtutorials.com/esp32-microsd-card-arduino/#sdcardcustompins
+OneWire - https://randomnerdtutorials.com/esp32-multiple-ds18b20-temperature-sensors/
 */
 
 #include "FS.h"
 #include "SD.h"
+#include <OneWire.h>
 #include <Wire.h>
 #include <ClosedCube_Si7051.h>
 #include <LiquidCrystal_PCF8574.h>
+#include <DallasTemperature.h>
 
 // Pin definitions through multiplexer
 const int lcd_bus = 5;
@@ -18,8 +21,20 @@ const int temp_short_bus = 6;
 const int temp_long_bus = 7;
 const int buzzer_pin = 14;
 
+// Data wire connected to GPIO 27
+const int one_wire_bus = 27;
+// Setup a oneWire instance to communicate with a OneWire device
+OneWire oneWire(one_wire_bus);
+// Pass our oneWire reference to Dallas Temperature sensor
+DallasTemperature sensors(&oneWire);
+
+// Dallas temperature sensor addresses
+DeviceAddress sensor1 = { 0x28, 0xFF, 0x47, 0x27, 0x33, 0x17, 0x3, 0x5C };
+DeviceAddress sensor2 = { 0x28, 0xFF, 0x31, 0x51, 0x40, 0x17, 0x5, 0x84 };
+
 // Filename for microSD
-const char *filename = "/temperature_readings1.txt";
+const char *filename = "/temperature_readings.txt";
+int rowIndex = 0;
 
 // Temperature sensors
 ClosedCube_Si7051 si7051;
@@ -103,18 +118,16 @@ void setup() {
   // Start I2C communication with the Multiplexer
   Wire.begin();
 
-  Serial.println("Begin short");
   // Temperature sensor on a short wire
   TCA9548A(temp_short_bus);
   si7051.begin(0x40);
 
-  Serial.println("Begin long");
   // Temperature sensor on a long wire
   TCA9548A(temp_long_bus);
   si7051.begin(0x40);
 
-  Serial.println("Initializing LCD...");
   // Initialize LCD
+  Serial.println("Initializing LCD...");
   TCA9548A(lcd_bus);
   lcd.begin(lcdColumns, lcdRows);
   lcd.setBacklight(255);
@@ -135,58 +148,78 @@ void setup() {
   if (!file) {
     file.close();
     Serial.println("File does not exist, creating a new file...");
-    String columns = "Index, Temperature (short), Temperature (long), Temperature Difference (short and long) \r\n";
+    String columns = "Index, Temperature (short), Temperature (long), Difference (short and long), Temperature (dallas1), Temperature (dallas2), Difference (dallas1 and dallas2) \r\n";
     writeToFile(SD, filename, columns.c_str());
   } else {
     file.close();
     Serial.println("File exists");
   }
-  
+
   // Initialize a buzzer pin as an output pin
   pinMode(buzzer_pin, OUTPUT);
 }
 
 void loop() {
-  // Average temperatures for short and long termometers
+  // Temperature readings
+  double tempShort = 0;
+  double tempLong = 0;
+
+  // Average temperatures for short and long thermometers
   double avS = 0;
   char avS_bf[8];
   double avL = 0;
   char avL_bf[8];
 
-  // Difference between short and long termometer
+  // Difference between short and long thermometer
   double dLS = 0;
   char dLS_bf[8];
 
-  // Temperature readings
-  double tempShort = 0;
-  double tempLong = 0;
+  // Dallas temperature readings
+  double dallas1 = 0;
+  double dallas2 = 0;
+  char dallas1_bf[8];
+  char dallas2_bf[8];
+
+  // Difference between Dallas thermometers
+  double diffDallas = 0;
+  char diffDallas_bf[8];
 
   // Make 250 readings and calculate the average
-  for (int i = 0; i < 250; i++) {
+  int readings = 250;
+  for (int i = 0; i < readings; i++) {
     TCA9548A(temp_short_bus);
     tempShort += si7051.readTemperature();
     TCA9548A(temp_long_bus);
     tempLong += si7051.readTemperature();
   }
-
-  avS = tempShort / 250;
-  avL = tempLong / 250;
-  // avL = avL - 0.0105;
+  
+  avS = tempShort / readings;
+  avL = tempLong / readings;
   dLS = avL - avS;
 
+  // Dallas thermometers readings (doesn't work in the loop to calculate the average)
+  sensors.requestTemperatures();
+  dallas1 += sensors.getTempC(sensor1);
+  dallas2 += sensors.getTempC(sensor2);
+  diffDallas = dallas2 - dallas1;
+
   sprintf(avS_bf, "%3.4f", avS);
-  // Serial.print("Termometer S = ");
-  // Serial.print(avS_bf);
-  // Serial.println(" C");
+  Serial.printf("Termometer S = %3.4f C\n", avS_bf);
 
   sprintf(avL_bf, "%3.4f", avL);
-  // Serial.print("Termometer L = ");
-  // Serial.print(avL_bf);
-  // Serial.println(" C");
-
-  // Serial.println(dLS * 100);
+  Serial.printf("Termometer L = %3.4f C\n", avL_bf);
 
   sprintf(dLS_bf, "%3.4f", dLS);
+  Serial.printf("Diff S-L = %3.4f C\n", dLS * 100);
+
+  sprintf(dallas1_bf, "%3.4f", dallas1);
+  Serial.printf("Termometer Dallas1 = %3.4f C\n", dallas1_bf);
+
+  sprintf(dallas2_bf, "%3.4f", dallas2);
+  Serial.printf("Termometer Dallas2 = %3.4f C\n", dallas2_bf);
+
+  sprintf(diffDallas_bf, "%3.4f", diffDallas);
+  Serial.printf("Diff Dallas = %3.4f C\n", diffDallas * 100);
 
   // Switch to LCD bus
   TCA9548A(lcd_bus);
@@ -221,8 +254,7 @@ void loop() {
   lcd.display();
 
   // Append to file on microSD
-  int index = 0;
-  String data = String(index++) + "," + String(avS) + "," + String(avL) + "," + String(dLS) + "\r\n";
+  String data = String(rowIndex++) + "," + String(avS) + "," + String(avL) + "," + String(dLS) + "," + String(dallas1) + "," + String(dallas2) + "," + String(diffDallas) + "\r\n";
   // Serial.println(data);
   appendToFile(SD, filename, data.c_str());
 
