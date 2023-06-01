@@ -4,7 +4,8 @@ https://randomnerdtutorials.com/tca9548a-i2c-multiplexer-esp32-esp8266-arduino/
 LCD - 20x4
 MicroSD - https://randomnerdtutorials.com/esp32-microsd-card-arduino/
 custom pins - https://randomnerdtutorials.com/esp32-microsd-card-arduino/#sdcardcustompins
-OneWire - https://randomnerdtutorials.com/esp32-multiple-ds18b20-temperature-sensors/
+OneWire, DS18B20 - https://randomnerdtutorials.com/esp32-multiple-ds18b20-temperature-sensors/
+LED&KEY - https://docs.turais.de/docs/displays/7segment/led-and-key-module-tm1638/
 */
 
 #include "FS.h"
@@ -14,12 +15,32 @@ OneWire - https://randomnerdtutorials.com/esp32-multiple-ds18b20-temperature-sen
 #include <ClosedCube_Si7051.h>
 #include <LiquidCrystal_PCF8574.h>
 #include <DallasTemperature.h>
+#include <TM1638.h>
 
 // Pin definitions through multiplexer
 const int lcd_bus = 5;
 const int temp_short_bus = 6;
 const int temp_long_bus = 7;
 const int buzzer_pin = 14;
+
+// Pin definitions for LED&KEY
+const int DIO = 33;
+const int CLK = 25;
+const int STB = 4;
+
+// LED&KEY
+TM1638 ledKeyModule(DIO, CLK, STB);
+typedef enum {
+  BTN1 = 1,
+  BTN2 = 2u,
+  BTN3 = 4u,
+  BTN4 = 8u,
+  BTN5 = 16u,
+  BTN6 = 32u,
+  BTN7 = 64u,
+  BTN8 = 128u
+} BTN;
+byte currentButtonState;
 
 // Data wire connected to GPIO 27
 const int one_wire_bus = 27;
@@ -67,6 +88,12 @@ byte hPa[8] = {
   B11111,
   B10011
 };
+
+// Get LED&KEY button state
+bool isButtonPressed(const byte &state, const BTN check) {
+  byte btn_state = (state & check);
+  return btn_state / check;
+}
 
 // Select I2C BUS
 void TCA9548A(uint8_t bus) {
@@ -192,7 +219,7 @@ void loop() {
     TCA9548A(temp_long_bus);
     tempLong += si7051.readTemperature();
   }
-  
+
   avS = tempShort / readings;
   avL = tempLong / readings;
   dLS = avL - avS;
@@ -221,41 +248,78 @@ void loop() {
   sprintf(diffDallas_bf, "%3.4f", diffDallas);
   Serial.printf("Diff Dallas = %3.4f C\n", diffDallas * 100);
 
-  // Switch to LCD bus
-  TCA9548A(lcd_bus);
+  byte buttonsState = ledKeyModule.getButtons();
+  Serial.println(buttonsState, HEX);
+  if (buttonsState != 0) {
+    currentButtonState = buttonsState;
+  }
+  Serial.println(currentButtonState);
+  if (isButtonPressed(currentButtonState, BTN1)) {
+    // Switch to LCD bus
+    TCA9548A(lcd_bus);
 
-  // Print S (temperature on the short wire) on the LCD
-  lcd.setCursor(0, 0);
-  lcd.print("S ");
-  lcd.setCursor(2, 0);
-  lcd.printf(avS_bf, "%3.4f", avS);
-  lcd.setCursor(9, 0);
-  lcd.write(0);
-  delay(10);
+    // Print S (temperature on the short wire) on the LCD
+    lcd.setCursor(0, 0);
+    lcd.print("S ");
+    lcd.setCursor(2, 0);
+    lcd.printf(avS_bf, "%3.4f", avS);
+    lcd.setCursor(9, 0);
+    lcd.write(0);
+    delay(10);
 
-  // Print L (temperature on the long wire) on the LCD
-  lcd.setCursor(0, 1);
-  lcd.print("L ");
-  lcd.setCursor(2, 1);
-  lcd.printf(avL_bf, "%3.4f", avL);
-  lcd.setCursor(9, 1);
-  lcd.write(0);
-  delay(10);
+    // Print L (temperature on the long wire) on the LCD
+    lcd.setCursor(0, 1);
+    lcd.print("L ");
+    lcd.setCursor(2, 1);
+    lcd.printf(avL_bf, "%3.4f", avL);
+    lcd.setCursor(9, 1);
+    lcd.write(0);
+    delay(10);
 
-  // Print D (difference between L and S) on the LCD
-  lcd.setCursor(0, 2);
-  lcd.print("D ");
-  lcd.setCursor(2, 2);
-  lcd.printf(dLS_bf, "%3.4f", dLS);
-  lcd.setCursor(9, 2);
-  lcd.write(0);
+    // Print D (difference between L and S) on the LCD
+    lcd.setCursor(0, 2);
+    lcd.print("D ");
+    lcd.setCursor(2, 2);
+    lcd.printf(dLS_bf, "%3.4f", dLS);
+    lcd.setCursor(9, 2);
+    lcd.write(0);
+  } else if (isButtonPressed(currentButtonState, BTN2)) {
+    // Switch to LCD bus
+    TCA9548A(lcd_bus);
+
+    // Print dallas1 on the LCD
+    lcd.setCursor(0, 0);
+    lcd.print("1 ");
+    lcd.setCursor(2, 0);
+    lcd.printf(dallas1_bf, "%3.4f", dallas1);
+    lcd.setCursor(9, 0);
+    lcd.write(0);
+    delay(10);
+
+    // Print dallas2 on the LCD
+    lcd.setCursor(0, 1);
+    lcd.print("2 ");
+    lcd.setCursor(2, 1);
+    lcd.printf(dallas2_bf, "%3.4f", dallas2);
+    lcd.setCursor(9, 1);
+    lcd.write(0);
+    delay(10);
+
+    // Print D (difference between dallas) on the LCD
+    lcd.setCursor(0, 2);
+    lcd.print("D ");
+    lcd.setCursor(2, 2);
+    lcd.printf(diffDallas_bf, "%3.4f", diffDallas);
+    lcd.setCursor(9, 2);
+    lcd.write(0);
+  }
 
   // Display on the LCD
   lcd.display();
 
   // Append to file on microSD
   String data = String(rowIndex++) + "," + String(avS) + "," + String(avL) + "," + String(dLS) + "," + String(dallas1) + "," + String(dallas2) + "," + String(diffDallas) + "\r\n";
-  // Serial.println(data);
+  Serial.println(data);
   appendToFile(SD, filename, data.c_str());
 
   // If average temperature of a short termometer is above 25.01, use a buzzer
